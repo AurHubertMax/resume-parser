@@ -14,8 +14,7 @@ def display_pdf(uploaded_file):
 
     Parameters
     ----------
-    uploaded_file : streamlit.uploaded_file_manager.UploadedFile
-        The PDF file that has been uploaded to the app.
+    uploaded_file : streamlit.uploaded_file_manager.UploadedFile = The PDF file that has been uploaded to the app.
 
     Returns
     -------
@@ -33,6 +32,19 @@ def display_pdf(uploaded_file):
 
     # display PDF
     st.markdown(pdf_display, unsafe_allow_html=True)
+
+def display_text(text):
+    """
+    Display parsed job description text
+
+    Parameters
+    ----------
+    text : str = The job description text to display
+
+    Returns
+    -------
+    None
+    """
 
 def load_streamlit_page():
     """
@@ -56,18 +68,30 @@ def load_streamlit_page():
         st.header("Input your OpenAI API key")
         st.text_input('OpenAI API Key', type="password", key="api_key",
                       label_visibility="collapsed", disabled=False)
+        st.header("input job description")
+        job_description = st.text_area("Job Description")
         st.header("Upload file")
         uploaded_file = st.file_uploader("Upload your resume", type="pdf")
 
-    return col1, col2, uploaded_file
+    return col1, col2, uploaded_file, job_description
 
 # load streamlit page
-col1, col2, uploaded_file = load_streamlit_page()
+col1, col2, uploaded_file, job_description = load_streamlit_page()
 
-# process the input
-if uploaded_file is not None:
+#process job description input
+"""
+if job_description is not None:
     with col2:
-        display_pdf(uploaded_file)
+"""
+
+        
+
+
+# process uploaded file input
+if uploaded_file is not None:
+    
+    with col2:
+        #display_pdf(uploaded_file)
 
         # load the documents
         documents = get_pdf_text(uploaded_file)
@@ -77,13 +101,14 @@ if uploaded_file is not None:
         
         st.write("Resume loaded successfully!")
     
+    
     # generate answer
     with col1:
         if (st.button("Generate table")):
             with st.spinner("Generating answer"):
                 # load vector_store
                 answer = query_document(vector_store=st.session_state.vector_store,
-                                        query="Give me the name, email, phone number, and education of the person in this resume.",
+                                        query="Give me the name, email, phone number, education, skills, work experience, other experience, and make a summary of the person in this resume.",
                                         api_key=st.session_state.api_key)
                 placeholder = st.empty()
                 placeholder.write(answer)

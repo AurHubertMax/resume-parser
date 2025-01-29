@@ -1,5 +1,6 @@
 from langchain.document_loaders import PyPDFLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
@@ -11,6 +12,11 @@ import tempfile
 import uuid
 import pandas as pd
 import re
+
+# set pandas display options
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
 
 def get_pdf_text(uploaded_file):
     """
@@ -57,7 +63,7 @@ def create_vector_store_from_texts(documents, api_key, file_name):
     """
     
     # step 2: split the documents into smaller chunks
-    docs = split_document(documents, chunk_size=1000, chunk_overlap=200)
+    docs = split_document(documents, chunk_size=800, chunk_overlap=200)
 
     # step 3: define embedding function, embedding function is a function that takes a text and returns a vector
     embedding_fn = get_embedding_function(api_key)
@@ -81,6 +87,13 @@ def split_document(documents, chunk_size, chunk_overlap):
                                                    chunk_overlap=chunk_overlap, 
                                                    length_function=len, 
                                                    separators=["\n\n", "\n", " "])
+    
+    test_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(model_name="gpt-4o-mini",
+                                                                         chunk_size=chunk_size,
+                                                                        chunk_overlap=chunk_overlap,
+                                                                        )
+    test = test_splitter.split_text(documents)
+    print(test)
     return text_splitter.split_documents(documents)
 
 def get_embedding_function(api_key):
@@ -154,7 +167,16 @@ def clean_filename(file_name):
     """
 
     # regEx to find "(number)" pattern
-    cleaned_name = re.sub(r'\s\(\d+\)', '', file_name)
+    #cleaned_name = re.sub(r'\s\(\d+\)', '', file_name)
+    #return cleaned_name
+    # Remove invalid characters and replace spaces with underscores
+    cleaned_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', file_name)
+    # Ensure the name starts and ends with an alphanumeric character
+    cleaned_name = re.sub(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', cleaned_name)
+    # Ensure the name is within the required length
+    cleaned_name = cleaned_name[:63]
+    # Ensure the name does not contain two consecutive periods
+    cleaned_name = re.sub(r'\.\.+', '_', cleaned_name)
     return cleaned_name
 
 def format_docs(docs):
@@ -191,18 +213,35 @@ class AnswerWithSources(BaseModel):
     source: str = Field(description="Full direct text chunk from the context used to answer the question")
     reasoning: str = Field(description="Explain the reasoning of the answer based on the sources")
 
+class EducationWithSources(BaseModel):
+    """Extracted education information with sources."""
+    school: AnswerWithSources
+    degree: AnswerWithSources
+    major: AnswerWithSources
+    location: AnswerWithSources
+    duration: AnswerWithSources
+
+class ExperienceWithSources(BaseModel):
+    """Extracted experience information with sources."""
+    title: AnswerWithSources
+    company: AnswerWithSources
+    location: AnswerWithSources
+    duration: AnswerWithSources
+    description: AnswerWithSources
 class ExtractedInfoWithSources(BaseModel):
     """Extracted information about the resume:"""
     name: AnswerWithSources  
     email: AnswerWithSources  
     phone: AnswerWithSources  
-    education: AnswerWithSources  
-    experience:  AnswerWithSources  
+    education: list[EducationWithSources]  
+    work_experience:  list[ExperienceWithSources]
+    other_experience: list[ExperienceWithSources]
     skills: AnswerWithSources  
     summary:  AnswerWithSources  
 
 def query_document(vector_store, query, api_key):
     """
+    Like a librarian, look up the query in the resume vector store and return a structured response.
     Query a vector store with a question and return a structured response.
 
     params:
@@ -233,19 +272,53 @@ def query_document(vector_store, query, api_key):
     structured_response = rag_chain.invoke(query)
     df = pd.DataFrame([structured_response.dict()])
 
+    
     # transforming into a table with three rows: 'answer', 'source', 'reasoning'
     answer_row = []
     source_row = []
     reasoning_row = []
 
-    for col in df.columns:
-        answer_row.append(df[col][0]['answer'])
-        source_row.append(df[col][0]['source'])
-        reasoning_row.append(df[col][0]['reasoning'])
-    
-    # create a DataFrame with three rows: 'answer', 'source', 'reasoning', 
-    structured_response_df = pd.DataFrame([answer_row, source_row, reasoning_row], columns=df.columns, index=['answer', 'source', 'reasoning']).T
+    seen_education = set()
+    seen_work_experience = set()
+    seen_other_experience = set()
 
-    return structured_response_df
+    for col in df.columns:
+        if isinstance(df[col][0], list):
+            if col == 'education': 
+                education_entries = []
+                for entry in df[col][0]:
+                    education_entry = (entry['school']['answer'], entry['degree']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if education_entry not in seen_education:
+                        seen_education.add(education_entry)
+                        education_entries.append(f"{entry['school']['answer']} | {entry['degree']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']}")
+                answer_row.append("\n\n".join(education_entries))
+
+            elif col == 'work_experience':
+                experience_entries = []
+                for entry in df[col][0]:
+                    experience_entry = (entry['title']['answer'], entry['company']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if experience_entry not in seen_work_experience:
+                        seen_work_experience.add(experience_entry)
+                        experience_entries.append(f"{entry['title']['answer']} | {entry['company']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']} | {entry['description']['answer']}")
+                answer_row.append("\n\n".join(experience_entries))
+
+            elif col == 'other_experience':
+                other_experience_entries = []
+                for entry in df[col][0]:
+                    other_experience_entry = (entry['title']['answer'], entry['company']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if other_experience_entry not in seen_other_experience:
+                        seen_other_experience.add(other_experience_entry)
+                        other_experience_entries.append(f"{entry['title']['answer']} | {entry['company']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']} | {entry['description']['answer']}")
+                answer_row.append("\n\n".join(other_experience_entries))
+        else:
+            answer_row.append(df[col][0]['answer'])
+            source_row.append(df[col][0]['source'])
+            reasoning_row.append(df[col][0]['reasoning'])
+    
+    # create a DataFrame with three rows: 'answer', 'source', 'reasoning'
+    structured_response_df = pd.DataFrame([answer_row, source_row, reasoning_row], columns=df.columns, index=['answer', 'source', 'reasoning']).T
+    styled_df = structured_response_df.style.set_properties(**{'height': 'auto', 'width': 'auto'})
+
+    return styled_df
 
 
