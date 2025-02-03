@@ -1,6 +1,7 @@
 import streamlit as st
 import base64
 from functions import *
+from extract_functions import *
 
 # initialize API key in session 
 if 'api_key' not in st.session_state:
@@ -78,12 +79,6 @@ def load_streamlit_page():
 # load streamlit page
 col1, col2, uploaded_file, job_description = load_streamlit_page()
 
-#process job description input
-"""
-if job_description is not None:
-    with col2:
-"""
-
         
 
 
@@ -94,14 +89,18 @@ if uploaded_file is not None:
         #display_pdf(uploaded_file)
 
         # load the documents
-        documents = get_pdf_text(uploaded_file)
-        st.session_state.vector_store = create_vector_store_from_texts(documents, 
-                                                                       api_key=st.session_state.api_key, 
-                                                                       file_name=uploaded_file.name)
+        #documents = get_pdf_text(uploaded_file)
+        #st.session_state.vector_store = create_vector_store_from_texts(documents, 
+        #                                                               api_key=st.session_state.api_key, 
+        #                                                               file_name=uploaded_file.name)
+        
+        test_document = get_pdf_text_and_metadata(uploaded_file)
+        
+        extract_sections_and_parts(test_document)
         
         st.write("Resume loaded successfully!")
     
-    
+    """
     # generate answer
     with col1:
         if (st.button("Generate table")):
@@ -112,3 +111,4 @@ if uploaded_file is not None:
                                         api_key=st.session_state.api_key)
                 placeholder = st.empty()
                 placeholder.write(answer)
+    """

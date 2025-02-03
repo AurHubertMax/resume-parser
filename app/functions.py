@@ -1,11 +1,14 @@
 from langchain.document_loaders import PyPDFLoader
-#from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.schema import Document
 
 import os
 import tempfile
@@ -18,6 +21,31 @@ pd.set_option('display.max_colwidth', None)
 pd.set_option('display.max_rows', None)
 pd.set_option('display.max_columns', None)
 
+def extract_sections(documents):
+    """
+    Extract sections from a list of documents
+
+    params:
+        documents (list): A list of documents to extract sections from
+
+    returns:
+        None, prints the extracted sections in a file
+    """
+
+    pattern = r"(?m)^(?:[A-Z][A-Z\s]+[_]+|[A-Z][A-Z\s]+$)" # regex pattern to match section headers, currently matches all caps words
+    matches = re.findall(pattern, format_docs(documents)) # find all matches of the pattern in the documents
+
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "sections.txt")
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Extracted sections:\n")
+        for i, match in enumerate(matches):
+            f.write(f"Section {i+1}: {match}\n")
+        f.write("\n")
+    f.close()
+
 def get_pdf_text(uploaded_file):
     """
     Load a PDF document from an uploaded file and return it as a list of documents
@@ -28,7 +56,7 @@ def get_pdf_text(uploaded_file):
     Returns:
         documents (list): A list of documents created from the uploaded PDF file
     """
-
+    
     try:
         # read file contents
         input_file = uploaded_file.read()
@@ -43,6 +71,19 @@ def get_pdf_text(uploaded_file):
         loader = PyPDFLoader(temp_file.name)
         documents = loader.load()
 
+        output_dir = "../test_outputs"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "pdf_text.txt")
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write("Text chunks:\n")
+            for i, doc in enumerate(documents):
+                documents_formatted = re.sub(r' {2,}', ' ', doc.page_content) # replace multiple spaces with a single space
+                doc.page_content = documents_formatted
+                f.write(f"Document {i+1} raw content:\n{repr(documents_formatted)}\n{'-' * 80}\n")
+        f.close()
+
+        extract_sections(documents)
         return documents
     
     finally:
@@ -63,16 +104,57 @@ def create_vector_store_from_texts(documents, api_key, file_name):
     """
     
     # step 2: split the documents into smaller chunks
-    docs = split_document(documents, chunk_size=800, chunk_overlap=200)
+    docs = split_document(documents, chunk_size=10, chunk_overlap=1)
+    docs1 = split_text(documents, chunk_size=800, chunk_overlap=200)
 
     # step 3: define embedding function, embedding function is a function that takes a text and returns a vector
     embedding_fn = get_embedding_function(api_key)
 
     # step 4: create a vector store
+    # vector_store = create_vector_store(docs, embedding_fn, file_name)
     vector_store = create_vector_store(docs, embedding_fn, file_name)
 
     return vector_store
 
+def split_text(document, chunk_size, chunk_overlap):
+    """ 
+    params:
+        document (list): A list of generic texts to split into smaller chunks
+        chunk_size (int): The desired max size of each chunk (default: 400)
+        chunk_overlap (int): The number of characters to overlap between each chunk (default: 20)
+
+    returns:
+        list (list): A list of smaller text chunks created from the generic texts
+    """
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "text_chunks.txt")
+    
+    print("type of document: ", type(document))
+    
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, 
+                                                   chunk_overlap=chunk_overlap, 
+                                                   length_function=len, 
+                                                   separators=["\n\n", "\n"])
+    
+    # Concatenate the text content of the documents into a single string
+    concatenated_text = "\n\n".join(doc.page_content for doc in document)
+    #text_splitter = SemanticChunker(OpenAIEmbeddings(), breakpoint_threshold_type="percentile")
+    #test = text_splitter.split_text(concatenated_text)
+    
+
+    text_chunks = text_splitter.split_text(concatenated_text)
+
+    # For debugging purposes, write the text chunks to a file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Text chunks:\n")
+        for i, chunk in enumerate(text_chunks):
+            f.write(f"Chunk {i+1}:\n")
+            f.write(chunk + "\n")
+            f.write("-" * 80 + "\n")
+    f.close()
+
+    return text_chunks
 def split_document(documents, chunk_size, chunk_overlap):
     """ 
     params:
@@ -83,18 +165,41 @@ def split_document(documents, chunk_size, chunk_overlap):
     returns:
         list (list): A list of smaller text chunks created from the generic texts
     """
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "document_chunks.txt")
+
+    def resume_length_fn(text):
+        paragraphs = text.split("\n\n")
+        sections = {}
+        for paragraph in paragraphs:
+            lines = paragraph.split("\n")
+            section_name = lines[0].strip()
+            section_content = "\n".join(lines[1:])
+            sections[section_name] = section_content
+        #return sections
+        return len(text.split("\n\n"))
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, 
                                                    chunk_overlap=chunk_overlap, 
-                                                   length_function=len, 
-                                                   separators=["\n\n", "\n", " "])
+                                                   length_function=resume_length_fn,
+                                                   separators=["\n\n", "\n"])
     
-    test_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(model_name="gpt-4o-mini",
-                                                                         chunk_size=chunk_size,
-                                                                        chunk_overlap=chunk_overlap,
-                                                                        )
-    test = test_splitter.split_text(documents)
-    print(test)
-    return text_splitter.split_documents(documents)
+    document_chunks = text_splitter.split_documents(documents)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Document chunks:\n")
+        for i, doc in enumerate(document_chunks):
+            f.write(f"Chunk {i+1}:\n")
+            f.write(doc.page_content + "\n")
+            f.write("-" * 80 + "\n")
+    f.close()
+    #chunk_list = []
+    #for chunk in document_chunks:
+    #    for section_name, section_content in chunk.items():
+    #        chunk_list.append(section_content)
+    #return chunk_list
+    return document_chunks
 
 def get_embedding_function(api_key):
     """
@@ -129,7 +234,7 @@ def create_vector_store(chunks, embedding_fn, file_name, vector_store_path="db")
     returns:
         vector_store (Chroma object): A Chroma vector store object
     """
-
+    # documents = [Document(page_content=chunk) for chunk in chunks]
     # create a list of unique ids for each document based on the content to prevent duplicates
     ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, doc.page_content)) for doc in chunks]
 
