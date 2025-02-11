@@ -96,8 +96,11 @@ if uploaded_file is not None:
         
         test_document = get_pdf_text_and_metadata(uploaded_file)
         
-        extract_sections_and_parts(test_document)
-        
+        #sections = extract_sections_and_parts(test_document)
+        #for section, content in sections.items():
+        #    print(f"Section: {section}")
+        #    print(f"Content:\n{content}\n")
+        #    print('-' * 80)
         st.write("Resume loaded successfully!")
     
     """
