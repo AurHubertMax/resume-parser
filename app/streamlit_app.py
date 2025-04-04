@@ -1,6 +1,7 @@
 import streamlit as st
 import base64
 from functions import *
+from extract_functions import *
 
 # initialize API key in session 
 if 'api_key' not in st.session_state:
@@ -14,8 +15,7 @@ def display_pdf(uploaded_file):
 
     Parameters
     ----------
-    uploaded_file : streamlit.uploaded_file_manager.UploadedFile
-        The PDF file that has been uploaded to the app.
+    uploaded_file : streamlit.uploaded_file_manager.UploadedFile = The PDF file that has been uploaded to the app.
 
     Returns
     -------
@@ -33,6 +33,19 @@ def display_pdf(uploaded_file):
 
     # display PDF
     st.markdown(pdf_display, unsafe_allow_html=True)
+
+def display_text(text):
+    """
+    Display parsed job description text
+
+    Parameters
+    ----------
+    text : str = The job description text to display
+
+    Returns
+    -------
+    None
+    """
 
 def load_streamlit_page():
     """
@@ -56,34 +69,49 @@ def load_streamlit_page():
         st.header("Input your OpenAI API key")
         st.text_input('OpenAI API Key', type="password", key="api_key",
                       label_visibility="collapsed", disabled=False)
+        st.header("input job description")
+        job_description = st.text_area("Job Description")
         st.header("Upload file")
         uploaded_file = st.file_uploader("Upload your resume", type="pdf")
 
-    return col1, col2, uploaded_file
+    return col1, col2, uploaded_file, job_description
 
 # load streamlit page
-col1, col2, uploaded_file = load_streamlit_page()
+col1, col2, uploaded_file, job_description = load_streamlit_page()
 
-# process the input
+        
+
+
+# process uploaded file input
 if uploaded_file is not None:
+    
     with col2:
-        display_pdf(uploaded_file)
+        #display_pdf(uploaded_file)
 
         # load the documents
-        documents = get_pdf_text(uploaded_file)
-        st.session_state.vector_store = create_vector_store_from_texts(documents, 
-                                                                       api_key=st.session_state.api_key, 
-                                                                       file_name=uploaded_file.name)
+        #documents = get_pdf_text(uploaded_file)
+        #st.session_state.vector_store = create_vector_store_from_texts(documents, 
+        #                                                               api_key=st.session_state.api_key, 
+        #                                                               file_name=uploaded_file.name)
         
+        test_document = get_pdf_text_and_metadata(uploaded_file)
+        
+        #sections = extract_sections_and_parts(test_document)
+        #for section, content in sections.items():
+        #    print(f"Section: {section}")
+        #    print(f"Content:\n{content}\n")
+        #    print('-' * 80)
         st.write("Resume loaded successfully!")
     
+    """
     # generate answer
     with col1:
         if (st.button("Generate table")):
             with st.spinner("Generating answer"):
                 # load vector_store
                 answer = query_document(vector_store=st.session_state.vector_store,
-                                        query="Give me the name, email, phone number, and education of the person in this resume.",
+                                        query="Give me the name, email, phone number, education, skills, work experience, other experience, and make a summary of the person in this resume.",
                                         api_key=st.session_state.api_key)
                 placeholder = st.empty()
                 placeholder.write(answer)
+    """

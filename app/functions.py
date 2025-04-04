@@ -1,16 +1,50 @@
 from langchain.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
+#from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.vectorstores import Chroma
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.pydantic_v1 import BaseModel, Field
+from langchain.schema import Document
 
 import os
 import tempfile
 import uuid
 import pandas as pd
 import re
+
+# set pandas display options
+pd.set_option('display.max_colwidth', None)
+pd.set_option('display.max_rows', None)
+pd.set_option('display.max_columns', None)
+
+def extract_sections(documents):
+    """
+    Extract sections from a list of documents
+
+    params:
+        documents (list): A list of documents to extract sections from
+
+    returns:
+        None, prints the extracted sections in a file
+    """
+
+    pattern = r"(?m)^(?:[A-Z][A-Z\s]+[_]+|[A-Z][A-Z\s]+$)" # regex pattern to match section headers, currently matches all caps words
+    matches = re.findall(pattern, format_docs(documents)) # find all matches of the pattern in the documents
+
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "sections.txt")
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Extracted sections:\n")
+        for i, match in enumerate(matches):
+            f.write(f"Section {i+1}: {match}\n")
+        f.write("\n")
+    f.close()
 
 def get_pdf_text(uploaded_file):
     """
@@ -22,7 +56,7 @@ def get_pdf_text(uploaded_file):
     Returns:
         documents (list): A list of documents created from the uploaded PDF file
     """
-
+    
     try:
         # read file contents
         input_file = uploaded_file.read()
@@ -37,6 +71,19 @@ def get_pdf_text(uploaded_file):
         loader = PyPDFLoader(temp_file.name)
         documents = loader.load()
 
+        output_dir = "../test_outputs"
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "pdf_text.txt")
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write("Text chunks:\n")
+            for i, doc in enumerate(documents):
+                documents_formatted = re.sub(r' {2,}', ' ', doc.page_content) # replace multiple spaces with a single space
+                doc.page_content = documents_formatted
+                f.write(f"Document {i+1} raw content:\n{repr(documents_formatted)}\n{'-' * 80}\n")
+        f.close()
+
+        extract_sections(documents)
         return documents
     
     finally:
@@ -57,16 +104,57 @@ def create_vector_store_from_texts(documents, api_key, file_name):
     """
     
     # step 2: split the documents into smaller chunks
-    docs = split_document(documents, chunk_size=1000, chunk_overlap=200)
+    docs = split_document(documents, chunk_size=10, chunk_overlap=1)
+    docs1 = split_text(documents, chunk_size=800, chunk_overlap=200)
 
     # step 3: define embedding function, embedding function is a function that takes a text and returns a vector
     embedding_fn = get_embedding_function(api_key)
 
     # step 4: create a vector store
+    # vector_store = create_vector_store(docs, embedding_fn, file_name)
     vector_store = create_vector_store(docs, embedding_fn, file_name)
 
     return vector_store
 
+def split_text(document, chunk_size, chunk_overlap):
+    """ 
+    params:
+        document (list): A list of generic texts to split into smaller chunks
+        chunk_size (int): The desired max size of each chunk (default: 400)
+        chunk_overlap (int): The number of characters to overlap between each chunk (default: 20)
+
+    returns:
+        list (list): A list of smaller text chunks created from the generic texts
+    """
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "text_chunks.txt")
+    
+    print("type of document: ", type(document))
+    
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, 
+                                                   chunk_overlap=chunk_overlap, 
+                                                   length_function=len, 
+                                                   separators=["\n\n", "\n"])
+    
+    # Concatenate the text content of the documents into a single string
+    concatenated_text = "\n\n".join(doc.page_content for doc in document)
+    #text_splitter = SemanticChunker(OpenAIEmbeddings(), breakpoint_threshold_type="percentile")
+    #test = text_splitter.split_text(concatenated_text)
+    
+
+    text_chunks = text_splitter.split_text(concatenated_text)
+
+    # For debugging purposes, write the text chunks to a file
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Text chunks:\n")
+        for i, chunk in enumerate(text_chunks):
+            f.write(f"Chunk {i+1}:\n")
+            f.write(chunk + "\n")
+            f.write("-" * 80 + "\n")
+    f.close()
+
+    return text_chunks
 def split_document(documents, chunk_size, chunk_overlap):
     """ 
     params:
@@ -77,11 +165,41 @@ def split_document(documents, chunk_size, chunk_overlap):
     returns:
         list (list): A list of smaller text chunks created from the generic texts
     """
+    output_dir = "../test_outputs"
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "document_chunks.txt")
+
+    def resume_length_fn(text):
+        paragraphs = text.split("\n\n")
+        sections = {}
+        for paragraph in paragraphs:
+            lines = paragraph.split("\n")
+            section_name = lines[0].strip()
+            section_content = "\n".join(lines[1:])
+            sections[section_name] = section_content
+        #return sections
+        return len(text.split("\n\n"))
+
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, 
                                                    chunk_overlap=chunk_overlap, 
-                                                   length_function=len, 
-                                                   separators=["\n\n", "\n", " "])
-    return text_splitter.split_documents(documents)
+                                                   length_function=resume_length_fn,
+                                                   separators=["\n\n", "\n"])
+    
+    document_chunks = text_splitter.split_documents(documents)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write("Document chunks:\n")
+        for i, doc in enumerate(document_chunks):
+            f.write(f"Chunk {i+1}:\n")
+            f.write(doc.page_content + "\n")
+            f.write("-" * 80 + "\n")
+    f.close()
+    #chunk_list = []
+    #for chunk in document_chunks:
+    #    for section_name, section_content in chunk.items():
+    #        chunk_list.append(section_content)
+    #return chunk_list
+    return document_chunks
 
 def get_embedding_function(api_key):
     """
@@ -116,7 +234,7 @@ def create_vector_store(chunks, embedding_fn, file_name, vector_store_path="db")
     returns:
         vector_store (Chroma object): A Chroma vector store object
     """
-
+    # documents = [Document(page_content=chunk) for chunk in chunks]
     # create a list of unique ids for each document based on the content to prevent duplicates
     ids = [str(uuid.uuid5(uuid.NAMESPACE_URL, doc.page_content)) for doc in chunks]
 
@@ -154,7 +272,16 @@ def clean_filename(file_name):
     """
 
     # regEx to find "(number)" pattern
-    cleaned_name = re.sub(r'\s\(\d+\)', '', file_name)
+    #cleaned_name = re.sub(r'\s\(\d+\)', '', file_name)
+    #return cleaned_name
+    # Remove invalid characters and replace spaces with underscores
+    cleaned_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', file_name)
+    # Ensure the name starts and ends with an alphanumeric character
+    cleaned_name = re.sub(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', cleaned_name)
+    # Ensure the name is within the required length
+    cleaned_name = cleaned_name[:63]
+    # Ensure the name does not contain two consecutive periods
+    cleaned_name = re.sub(r'\.\.+', '_', cleaned_name)
     return cleaned_name
 
 def format_docs(docs):
@@ -191,18 +318,35 @@ class AnswerWithSources(BaseModel):
     source: str = Field(description="Full direct text chunk from the context used to answer the question")
     reasoning: str = Field(description="Explain the reasoning of the answer based on the sources")
 
+class EducationWithSources(BaseModel):
+    """Extracted education information with sources."""
+    school: AnswerWithSources
+    degree: AnswerWithSources
+    major: AnswerWithSources
+    location: AnswerWithSources
+    duration: AnswerWithSources
+
+class ExperienceWithSources(BaseModel):
+    """Extracted experience information with sources."""
+    title: AnswerWithSources
+    company: AnswerWithSources
+    location: AnswerWithSources
+    duration: AnswerWithSources
+    description: AnswerWithSources
 class ExtractedInfoWithSources(BaseModel):
     """Extracted information about the resume:"""
     name: AnswerWithSources  
     email: AnswerWithSources  
     phone: AnswerWithSources  
-    education: AnswerWithSources  
-    experience:  AnswerWithSources  
+    education: list[EducationWithSources]  
+    work_experience:  list[ExperienceWithSources]
+    other_experience: list[ExperienceWithSources]
     skills: AnswerWithSources  
     summary:  AnswerWithSources  
 
 def query_document(vector_store, query, api_key):
     """
+    Like a librarian, look up the query in the resume vector store and return a structured response.
     Query a vector store with a question and return a structured response.
 
     params:
@@ -233,19 +377,53 @@ def query_document(vector_store, query, api_key):
     structured_response = rag_chain.invoke(query)
     df = pd.DataFrame([structured_response.dict()])
 
+    
     # transforming into a table with three rows: 'answer', 'source', 'reasoning'
     answer_row = []
     source_row = []
     reasoning_row = []
 
-    for col in df.columns:
-        answer_row.append(df[col][0]['answer'])
-        source_row.append(df[col][0]['source'])
-        reasoning_row.append(df[col][0]['reasoning'])
-    
-    # create a DataFrame with three rows: 'answer', 'source', 'reasoning', 
-    structured_response_df = pd.DataFrame([answer_row, source_row, reasoning_row], columns=df.columns, index=['answer', 'source', 'reasoning']).T
+    seen_education = set()
+    seen_work_experience = set()
+    seen_other_experience = set()
 
-    return structured_response_df
+    for col in df.columns:
+        if isinstance(df[col][0], list):
+            if col == 'education': 
+                education_entries = []
+                for entry in df[col][0]:
+                    education_entry = (entry['school']['answer'], entry['degree']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if education_entry not in seen_education:
+                        seen_education.add(education_entry)
+                        education_entries.append(f"{entry['school']['answer']} | {entry['degree']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']}")
+                answer_row.append("\n\n".join(education_entries))
+
+            elif col == 'work_experience':
+                experience_entries = []
+                for entry in df[col][0]:
+                    experience_entry = (entry['title']['answer'], entry['company']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if experience_entry not in seen_work_experience:
+                        seen_work_experience.add(experience_entry)
+                        experience_entries.append(f"{entry['title']['answer']} | {entry['company']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']} | {entry['description']['answer']}")
+                answer_row.append("\n\n".join(experience_entries))
+
+            elif col == 'other_experience':
+                other_experience_entries = []
+                for entry in df[col][0]:
+                    other_experience_entry = (entry['title']['answer'], entry['company']['answer'], entry['location']['answer'], entry['duration']['answer'])
+                    if other_experience_entry not in seen_other_experience:
+                        seen_other_experience.add(other_experience_entry)
+                        other_experience_entries.append(f"{entry['title']['answer']} | {entry['company']['answer']} | {entry['location']['answer']} | {entry['duration']['answer']} | {entry['description']['answer']}")
+                answer_row.append("\n\n".join(other_experience_entries))
+        else:
+            answer_row.append(df[col][0]['answer'])
+            source_row.append(df[col][0]['source'])
+            reasoning_row.append(df[col][0]['reasoning'])
+    
+    # create a DataFrame with three rows: 'answer', 'source', 'reasoning'
+    structured_response_df = pd.DataFrame([answer_row, source_row, reasoning_row], columns=df.columns, index=['answer', 'source', 'reasoning']).T
+    styled_df = structured_response_df.style.set_properties(**{'height': 'auto', 'width': 'auto'})
+
+    return styled_df
 
 

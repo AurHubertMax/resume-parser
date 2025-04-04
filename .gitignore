@@ -1,0 +1,7 @@
+.env
+env/*
+data/*
+db/*
+__pycache__/*
+test_outputs/*
+vector_store_chroma/*
